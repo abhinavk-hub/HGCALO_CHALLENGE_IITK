@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from torch_geometric.nn import GINEConv, global_mean_pool
 from torch.nn import Linear, Sequential, ReLU
+import numpy as np
 
 class GraphFolderDataset:
     def __init__(self, root_dir):
@@ -92,15 +93,17 @@ def preprocess(train_path, val_path, test_path):
     for dataset in [train_raw, val_raw, test_raw]:
         for g in dataset:
             g.y[0] = (g.y[0] - y0_mean) / y0_std
+    
+    aa = [y0_mean, y0_std]
 
     return (
         ListDataset(train_raw),
         ListDataset(val_raw),
-        ListDataset(test_raw),
+        ListDataset(test_raw), aa
     )
 
 
-train_dataset, val_dataset, test_dataset = preprocess(
+train_dataset, val_dataset, test_dataset, bb = preprocess(
     "/eos/user/a/abkumar/gnn_train",
     "/eos/user/a/abkumar/gnn_val",
     "/eos/user/a/abkumar/gnn_test"
@@ -151,7 +154,8 @@ criterion = torch.nn.MSELoss()
 train_losses = []
 val_losses = []
 test_losses = []
-
+true_energy = []
+pred_energy = []
 def val_loss(loader):
     model.eval()
     total = 0
@@ -166,13 +170,19 @@ def val_loss(loader):
 def test_loss(loader):
     model.eval()
     total = 0
+    all_true = []
+    all_pred = []
     with torch.no_grad():
         for data in loader:
             out = model(data.x, data.edge_index, data.edge_attr, data.batch)
             data.y = data.y.reshape(len(data), 2)
+            true_e = data.y[:,0]*bb[1]+bb[0]
+            pred_e = out[:,0]*bb[1]+bb[0]
+            all_true.append(true_e.cpu())
+            all_pred.append(pred_e.cpu())
             loss = criterion(out, data.y)
             total += loss.item()
-    return total / len(loader)
+    return (total / len(loader), torch.cat(all_true), torch.cat(all_pred))
 
 for epoch in range(15):
     model.train()
@@ -190,7 +200,11 @@ for epoch in range(15):
 
     train_losses.append(total / len(train_loader))
     val_losses.append(val_loss(val_loader))
-    test_losses.append(test_loss(test_loader))
+    t_loss, t_e, p_e = test_loss(test_loader)
+    test_losses.append(t_loss)
+    true_energy.append(t_e)
+    pred_energy.append(p_e)
+    
 
     print(f"Epoch {epoch:02d} | Train {train_losses[-1]:.4f} | Val {val_losses[-1]:.4f} | Test {test_losses[-1]:.4f}")
 
@@ -202,4 +216,40 @@ plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.title("Training Curve")
 plt.savefig("loss.png")
+plt.show()
+
+true_energy = torch.cat(true_energy)
+pred_energy = torch.cat(pred_energy)
+plt.figure(figsize=(7,7))
+plt.scatter(true_energy, pred_energy, s=10, alpha=0.5)
+
+# Plot ideal diagonal y = x
+min_val = min(true_energy.min(), pred_energy.min())
+max_val = max(true_energy.max(), pred_energy.max())
+plt.plot([min_val, max_val], [min_val, max_val], 'k--')
+
+plt.xlabel("True GEN Energy")
+plt.ylabel("Predicted GEN Energy")
+plt.title("GEN vs Predicted Energy")
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("gen_vs_pred.png")
+plt.show()
+
+ratio= (pred_energy-true_energy)/true_energy
+mu = torch.mean(ratio).item()
+sigma = torch.std(ratio).item()
+plt.figure(figsize=(8,6))
+#counts, bins, _ = plt.hist(ratio, bins=60, density=True, alpha=0.6, color='g')
+plt.hist(ratio, bins=60, density=True, alpha=0.6, color='g')
+xmin, xmax = plt.xlim()
+x = np.linspace(xmin, xmax, 200)
+p = (1/(sigma * np.sqrt(2*np.pi))) * np.exp( - (x - mu)**2 / (2*sigma**2) )
+plt.plot(x, p, 'k', linewidth=2)
+plt.xlabel("(Pred - True) / True")
+plt.ylabel("Density")
+plt.title("Residual Distribution with Gaussian Fit")
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("residual_hist_gaussian.png")
 plt.show()
