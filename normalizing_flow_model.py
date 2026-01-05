@@ -1,5 +1,3 @@
-# for using torch on lxplus: source /cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-el9-gcc12-opt/setup.sh
-# for using torch with cuda on lxplus: source /cvmfs/sft.cern.ch/lcg/views/LCG_108_cuda/x86_64-el9-gcc13-opt/setup.sh
 import os
 import torch
 from torch_geometric.data import Data
@@ -54,7 +52,7 @@ class ConditioningGNN(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * x_dim)  # scale + shift
+            nn.Linear(hidden_dim, 2 * x_dim)
         )
 
     def forward(self, x, edge_index, y, batch):
@@ -73,7 +71,6 @@ class GraphAffineCoupling(nn.Module):
         super().__init__()
         self.register_buffer("mask", mask)
         self.net = ConditioningGNN(x_dim, y_dim, hidden_dim)
-        #self.net = ConditioningMLP(x_dim, y_dim, hidden_dim)
 
     def forward(self, x, edge_index, y, batch):
         x_masked = x * self.mask
@@ -175,7 +172,6 @@ torch.cuda.empty_cache()
 print(torch.cuda.memory_allocated() / 1024**3, "GB")
 print(torch.cuda.memory_reserved() / 1024**3, "GB")
 epochs = 3
-#scaler = GradScaler()
 for epoch in range(1, epochs + 1):
     train_loss = train_flow(flow, train_loader,optimizer, device)
     #val_loss = train_flow(flow, val_loader, optimizer, device)
@@ -183,7 +179,6 @@ for epoch in range(1, epochs + 1):
 
 def total_energy_per_graph(x,e_mu, e_std, e_idx=3):
     
-    #num_graphs = batch.max().item() + 1
     E = x[:, e_idx]*e_std+e_mu
 
     #E_sum = torch.zeros(1, device=x.device)
@@ -209,13 +204,11 @@ with torch.no_grad():
         batch = test_dataset[i]
         batch = batch.to(device)
 
-        # --- generate ---
         z = torch.randn_like(batch.x)
         batch_vec = torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
         x_gen = flow.inverse(z, batch.edge_index, batch.y.view(1, y_dim), batch_vec)
         #x_gen = flow.inverse(z, batch.edge_index, batch.y)
 
-        # --- energies ---
         E_r = total_energy_per_graph(batch.x, E_mu, E_std).cpu()
         E_g  = total_energy_per_graph(x_gen, E_mu, E_std).cpu()
         E_real_list.append(E_r)
